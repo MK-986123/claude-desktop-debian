@@ -189,8 +189,9 @@ Description: $DESCRIPTION
  Claude is an AI assistant from Anthropic.
  This package provides the desktop interface for Claude.
  .
- Supported on Debian-based Linux distributions (Debian, Ubuntu, Linux Mint, MX Linux, etc.)
- Requires: nodejs (>= 12.0.0), npm
+ Supported on Debian-based Linux distributions (Debian 11+, Ubuntu 22.04+, Linux Mint, MX Linux, etc.)
+ Tested on Ubuntu 22.04, 24.04, and 25.04
+ Requires: nodejs (>= 18.0.0), npm
 EOF
 echo "✓ Control file created"
 

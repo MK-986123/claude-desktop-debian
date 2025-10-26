@@ -15,8 +15,8 @@ on:
 
 jobs:
   build:
-    # Use the standard GitHub-hosted runner for AMD64
-    runs-on: ubuntu-latest
+    # Use ubuntu-24.04 for better compatibility with modern Ubuntu versions
+    runs-on: ubuntu-24.04
 
     steps:
     # Checkout code is needed within the reusable workflow itself

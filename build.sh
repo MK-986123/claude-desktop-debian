@@ -49,7 +49,7 @@ echo "Running as user: $ORIGINAL_USER (Home: $ORIGINAL_HOME)"
 
 # Check for NVM and source it if found - this may provide a Node.js 20+ version
 if [ -d "$ORIGINAL_HOME/.nvm" ]; then
-    echo "Found NVM installation for user $ORIGINAL_USER, checking for Node.js 20+..."
+    echo "Found NVM installation for user $ORIGINAL_USER, checking for Node.js 18+..."
     export NVM_DIR="$ORIGINAL_HOME/.nvm"
     if [ -s "$NVM_DIR/nvm.sh" ]; then
         # Source NVM script to set up NVM environment variables temporarily
@@ -209,11 +209,11 @@ if command -v node &> /dev/null; then
     NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d'.' -f1)
     echo "System Node.js version: v$NODE_VERSION"
     
-    if [ "$NODE_MAJOR" -ge 20 ]; then
+    if [ "$NODE_MAJOR" -ge 18 ]; then
         echo "✓ System Node.js version is adequate (v$NODE_VERSION)"
         NODE_VERSION_OK=true
     else
-        echo "⚠️ System Node.js version is too old (v$NODE_VERSION). Need v20+"
+        echo "⚠️ System Node.js version is too old (v$NODE_VERSION). Need v18+"
     fi
 else
     echo "⚠️ Node.js not found in system"
@@ -221,7 +221,7 @@ fi
 
 # If system Node.js is not adequate, install a local copy
 if [ "$NODE_VERSION_OK" = false ]; then
-    echo "Installing Node.js v20 locally in build directory..."
+    echo "Installing Node.js v22 (latest LTS) locally in build directory..."
     
     # Determine Node.js download URL based on architecture
     if [ "$ARCHITECTURE" = "amd64" ]; then
@@ -233,7 +233,7 @@ if [ "$NODE_VERSION_OK" = false ]; then
         exit 1
     fi
     
-    NODE_VERSION_TO_INSTALL="20.18.1"
+    NODE_VERSION_TO_INSTALL="22.12.0"
     NODE_TARBALL="node-v${NODE_VERSION_TO_INSTALL}-linux-${NODE_ARCH}.tar.xz"
     NODE_URL="https://nodejs.org/dist/v${NODE_VERSION_TO_INSTALL}/${NODE_TARBALL}"
     NODE_INSTALL_DIR="$WORK_DIR/node"

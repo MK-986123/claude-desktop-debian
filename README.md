@@ -32,9 +32,11 @@ Download the latest `.deb` or `.AppImage` from the [Releases page](https://githu
 
 #### Prerequisites
 
-- Debian-based Linux distribution (Debian, Ubuntu, Linux Mint, MX Linux, etc.)
+- Debian-based Linux distribution (Debian 11+, Ubuntu 22.04+, Linux Mint, MX Linux, etc.)
+  - Tested and compatible with Ubuntu 22.04, 24.04, and 25.04
 - Git
 - Basic build tools (automatically installed by the script)
+- Node.js 18+ (automatically installed locally if not available)
 
 #### Build Instructions
 

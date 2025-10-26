@@ -15,8 +15,8 @@ on:
 
 jobs:
   build:
-    # Use an ARM runner
-    runs-on: ubuntu-22.04-arm # Or your self-hosted ARM runner label
+    # Use ubuntu-24.04 ARM runner for better compatibility with modern Ubuntu versions
+    runs-on: ubuntu-24.04-arm
 
     steps:
     # Checkout code is needed within the reusable workflow itself
