@@ -10,7 +10,8 @@ on:
         default: '' # Default is no extra flags
   workflow_dispatch: # Allows manual triggering for testing
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   build:
