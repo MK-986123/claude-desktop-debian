@@ -30,7 +30,9 @@ jobs:
     - name: Install FUSE for AppImageTool
       run: |
         sudo apt-get update
-        sudo apt-get install -y libfuse2
+        # Install libfuse2 for AppImage support
+        # On Ubuntu 24.04+, this may install libfuse2t64 as a compatibility package
+        sudo apt-get install -y libfuse2 || sudo apt-get install -y libfuse2t64 || true
 
     - name: Make build script executable
       run: chmod +x ./build.sh
