@@ -94,17 +94,18 @@ jobs:
       
       - name: Verify Node.js download URLs
         run: |
-          # Test that Node.js 22.12.0 is available for download
-          echo "Testing Node.js 22.12.0 download availability..."
+          # Test that Node.js 22.21.0 is available for download
+          echo "Testing Node.js 22.21.0 download availability..."
           
           for arch in x64 arm64; do
-            URL="https://nodejs.org/dist/v22.12.0/node-v22.12.0-linux-${arch}.tar.xz"
+            URL="https://nodejs.org/dist/v22.21.0/node-v22.21.0-linux-${arch}.tar.xz"
             echo "Checking ${arch}: ${URL}"
             
-            if curl -I "$URL" 2>&1 | grep -q "200 OK"; then
-              echo "✓ Node.js 22.12.0 for ${arch} is available"
+            # Use curl with -s to suppress progress, -f to fail on HTTP errors, -I for headers only
+            if curl -sfI "$URL" > /dev/null; then
+              echo "✓ Node.js 22.21.0 for ${arch} is available"
             else
-              echo "✗ Node.js 22.12.0 for ${arch} is NOT available"
+              echo "✗ Node.js 22.21.0 for ${arch} is NOT available"
               exit 1
             fi
           done

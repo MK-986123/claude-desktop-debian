@@ -233,7 +233,7 @@ if [ "$NODE_VERSION_OK" = false ]; then
         exit 1
     fi
     
-    NODE_VERSION_TO_INSTALL="22.12.0"
+    NODE_VERSION_TO_INSTALL="22.21.0"
     NODE_TARBALL="node-v${NODE_VERSION_TO_INSTALL}-linux-${NODE_ARCH}.tar.xz"
     NODE_URL="https://nodejs.org/dist/v${NODE_VERSION_TO_INSTALL}/${NODE_TARBALL}"
     NODE_INSTALL_DIR="$WORK_DIR/node"
