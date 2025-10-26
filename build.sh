@@ -300,7 +300,9 @@ fi
 
 if [ "$INSTALL_NEEDED" = true ]; then
     echo "Installing Electron and Asar locally into $WORK_DIR..."
-        if ! npm install --no-save electron @electron/asar; then
+        # Use @electron/asar@^3.2.1 for Node.js 18+ compatibility
+        # Version 4.x requires Node.js 22+
+        if ! npm install --no-save electron @electron/asar@^3.2.1; then
         echo "❌ Failed to install Electron and/or Asar locally."
         cd "$PROJECT_ROOT"
         exit 1
