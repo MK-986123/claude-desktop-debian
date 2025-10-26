@@ -4,6 +4,9 @@ on:
   workflow_call: # Make this workflow reusable
   workflow_dispatch: # Allows manual triggering for testing
 
+permissions:
+  contents: read
+
 jobs:
   test-flags:
     runs-on: ubuntu-24.04

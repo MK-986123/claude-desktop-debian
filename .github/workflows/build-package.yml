@@ -10,6 +10,8 @@ on:
         default: '' # Default is no extra flags
   workflow_dispatch: # Allows manual triggering for testing
 
+permissions: {}
+
 jobs:
   build:
     runs-on: ubuntu-24.04 # Use ubuntu-24.04 for better compatibility with modern Ubuntu versions
