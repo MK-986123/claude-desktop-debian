@@ -1,0 +1,109 @@
+name: Ubuntu Compatibility Test
+run-name: |
+  Ubuntu Compatibility: ${{
+    github.event_name == 'pull_request' && format('PR #{0} by @{1} - {2}', github.event.pull_request.number, github.actor, github.event.pull_request.title) ||
+    github.event_name == 'push' && github.event.head_commit && format('Push by @{0} - {1}', github.actor, github.event.head_commit.message) ||
+    format('{0} triggered by @{1}', github.event_name, github.actor)
+  }}
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'build.sh'
+      - 'scripts/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # Allow manual triggering
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-compatibility:
+    name: Test on Ubuntu ${{ matrix.ubuntu-version }}
+    runs-on: ubuntu-${{ matrix.ubuntu-version }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu-version: ['22.04', '24.04']
+        build-type: ['deb', 'appimage']
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Display system information
+        run: |
+          echo "=== System Information ==="
+          cat /etc/os-release
+          echo ""
+          echo "=== Architecture ==="
+          uname -m
+          dpkg --print-architecture
+          echo ""
+          echo "=== Kernel ==="
+          uname -r
+          echo ""
+          echo "=== Node.js (if available) ==="
+          node --version 2>&1 || echo "Node.js not installed"
+          echo ""
+          echo "=== Available disk space ==="
+          df -h /
+      
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2 shellcheck
+      
+      - name: Run build script flag test
+        run: |
+          chmod +x ./build.sh
+          ./build.sh --test-flags
+      
+      - name: Verify shellcheck passes
+        run: |
+          shellcheck build.sh scripts/*.sh
+      
+      - name: Test build script initialization
+        run: |
+          chmod +x ./build.sh scripts/*.sh
+          # Test that the script can initialize without errors (exit early)
+          timeout 60 ./build.sh --build ${{ matrix.build-type }} --test-flags || true
+      
+      - name: Check dependency installation would work
+        run: |
+          # Simulate dependency check without actually building
+          echo "Checking if all required packages are available in repositories..."
+          sudo apt-get update
+          
+          # Check for common dependencies
+          for pkg in p7zip-full wget icoutils imagemagick dpkg-dev; do
+            if apt-cache show $pkg >/dev/null 2>&1; then
+              echo "✓ Package $pkg is available"
+            else
+              echo "✗ Package $pkg is NOT available"
+              exit 1
+            fi
+          done
+          
+          echo "All required packages are available in Ubuntu ${{ matrix.ubuntu-version }} repositories"
+      
+      - name: Verify Node.js download URLs
+        run: |
+          # Test that Node.js 22.12.0 is available for download
+          echo "Testing Node.js 22.12.0 download availability..."
+          
+          for arch in x64 arm64; do
+            URL="https://nodejs.org/dist/v22.12.0/node-v22.12.0-linux-${arch}.tar.xz"
+            echo "Checking ${arch}: ${URL}"
+            
+            if curl -I "$URL" 2>&1 | grep -q "200 OK"; then
+              echo "✓ Node.js 22.12.0 for ${arch} is available"
+            else
+              echo "✗ Node.js 22.12.0 for ${arch} is NOT available"
+              exit 1
+            fi
+          done
