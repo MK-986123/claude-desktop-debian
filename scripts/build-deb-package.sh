@@ -77,9 +77,10 @@ Exec=/usr/bin/claude-desktop %u
 Icon=claude-desktop
 Type=Application
 Terminal=false
-Categories=Office;Utility;
+Categories=Network;Utility;Office;
 MimeType=x-scheme-handler/claude;
 StartupWMClass=Claude
+Comment=Claude Desktop for Linux
 EOF
 echo "✓ Desktop entry created"
 
@@ -94,41 +95,37 @@ echo "Arguments: \$@" >> "\$LOG_FILE"
 
 export ELECTRON_FORCE_IS_PACKAGED=true
 
-# Detect if Wayland is likely running
+# Detect Wayland session
 IS_WAYLAND=false
-if [ ! -z "\$WAYLAND_DISPLAY" ]; then
-  IS_WAYLAND=true
-  echo "Wayland detected" >> "\$LOG_FILE"
+if [ -n "\$WAYLAND_DISPLAY" ]; then
+    IS_WAYLAND=true
+    echo "Wayland detected (WAYLAND_DISPLAY=\$WAYLAND_DISPLAY)" >> "\$LOG_FILE"
+elif [ "\${XDG_SESSION_TYPE:-}" = "wayland" ]; then
+    IS_WAYLAND=true
+    echo "Wayland detected (XDG_SESSION_TYPE=wayland)" >> "\$LOG_FILE"
 fi
 
-# Check for display issues and set compatibility mode if needed
-if [ "\$IS_WAYLAND" = true ]; then
-  echo "Setting Wayland compatibility mode..." >> "\$LOG_FILE"
-  # Use native Wayland backend with GlobalShortcuts Portal support
-  export ELECTRON_OZONE_PLATFORM_HINT=wayland
-  # Keep GPU acceleration enabled for better performance
-  echo "Wayland compatibility mode enabled (using native Wayland backend)" >> "\$LOG_FILE"
-elif [ -z "\$DISPLAY" ] && [ -z "\$WAYLAND_DISPLAY" ]; then
-  echo "No display detected (TTY session) - cannot start graphical application" >> "\$LOG_FILE"
-  # No graphical environment detected; display error message in TTY session
-  echo "Error: Claude Desktop requires a graphical desktop environment." >&2
-  echo "Please run from within an X11 or Wayland session, not from a TTY." >&2
-  exit 1
+# Check for graphical environment
+if [ -z "\$DISPLAY" ] && [ -z "\$WAYLAND_DISPLAY" ]; then
+    echo "No display detected (TTY session) - cannot start graphical application" >> "\$LOG_FILE"
+    echo "Error: Claude Desktop requires a graphical desktop environment." >&2
+    echo "Please run from within an X11 or Wayland session, not from a TTY." >&2
+    exit 1
 fi
 
 # Determine Electron executable path
-ELECTRON_EXEC="electron" # Default to global
-LOCAL_ELECTRON_PATH="/usr/lib/$PACKAGE_NAME/node_modules/electron/dist/electron" # Correct path to executable
-if [ -f "\$LOCAL_ELECTRON_PATH" ]; then
+ELECTRON_EXEC="electron"
+LOCAL_ELECTRON_PATH="/usr/lib/$PACKAGE_NAME/node_modules/electron/dist/electron"
+if [ -x "\$LOCAL_ELECTRON_PATH" ]; then
     ELECTRON_EXEC="\$LOCAL_ELECTRON_PATH"
-    echo "Using local Electron: \$ELECTRON_EXEC" >> "\$LOG_FILE"
+    echo "Using local Electron at \$ELECTRON_EXEC" >> "\$LOG_FILE"
 else
-    # Check if global electron exists before declaring it as the choice
+    # Check if global electron exists
     if command -v electron &> /dev/null; then
-        echo "Using global Electron: \$ELECTRON_EXEC" >> "\$LOG_FILE"
+        echo "Using global Electron" >> "\$LOG_FILE"
     else
-        echo "Error: Electron executable not found (checked local \$LOCAL_ELECTRON_PATH and global path)." >> "\$LOG_FILE" # Log the correct path checked
-        # Optionally, display an error to the user via zenity or kdialog if available
+        echo "Error: Electron executable not found (checked local \$LOCAL_ELECTRON_PATH and global path)." >> "\$LOG_FILE"
+        # Display error to the user via zenity or kdialog if available
         if command -v zenity &> /dev/null; then
             zenity --error --text="Claude Desktop cannot start because the Electron framework is missing. Please ensure Electron is installed globally or reinstall Claude Desktop."
         elif command -v kdialog &> /dev/null; then
@@ -138,20 +135,18 @@ else
     fi
 fi
 
-# Base command arguments array, starting with app path
+# Base command arguments array
 APP_PATH="/usr/lib/$PACKAGE_NAME/app.asar"
 ELECTRON_ARGS=("\$APP_PATH")
 
-# Add compatibility flags
+# Add Wayland-specific flags
 if [ "\$IS_WAYLAND" = true ]; then
-  echo "Adding compatibility flags for Wayland session" >> "\$LOG_FILE"
-  ELECTRON_ARGS+=("--no-sandbox")
-  # Enable Wayland features for Electron 37+
-  ELECTRON_ARGS+=("--enable-features=UseOzonePlatform,WaylandWindowDecorations,GlobalShortcutsPortal")
-  ELECTRON_ARGS+=("--ozone-platform=wayland")
-  ELECTRON_ARGS+=("--enable-wayland-ime")
-  ELECTRON_ARGS+=("--wayland-text-input-version=3")
-  echo "Enabled native Wayland support with GlobalShortcuts Portal" >> "\$LOG_FILE"
+    echo "Adding Wayland compatibility flags" >> "\$LOG_FILE"
+    ELECTRON_ARGS+=("--enable-features=UseOzonePlatform,WaylandWindowDecorations,GlobalShortcutsPortal")
+    ELECTRON_ARGS+=("--ozone-platform=wayland")
+    ELECTRON_ARGS+=("--enable-wayland-ime")
+    ELECTRON_ARGS+=("--wayland-text-input-version=3")
+    echo "Enabled native Wayland support with GlobalShortcuts Portal" >> "\$LOG_FILE"
 fi
 
 # Change to the application directory
@@ -160,9 +155,7 @@ echo "Changing directory to \$APP_DIR" >> "\$LOG_FILE"
 cd "\$APP_DIR" || { echo "Failed to cd to \$APP_DIR" >> "\$LOG_FILE"; exit 1; }
 
 # Execute Electron with app path, flags, and script arguments
-# Redirect stdout and stderr to the log file
-FINAL_CMD="\"\$ELECTRON_EXEC\" \"\${ELECTRON_ARGS[@]}\" \"\$@\""
-echo "Executing: \$FINAL_CMD" >> "\$LOG_FILE"
+echo "Executing: \$ELECTRON_EXEC \${ELECTRON_ARGS[@]} \$@" >> "\$LOG_FILE"
 "\$ELECTRON_EXEC" "\${ELECTRON_ARGS[@]}" "\$@" >> "\$LOG_FILE" 2>&1
 EXIT_CODE=\$?
 echo "Electron exited with code: \$EXIT_CODE" >> "\$LOG_FILE"
@@ -174,10 +167,11 @@ echo "✓ Launcher script created"
 
 # --- Create Control File ---
 echo "📄 Creating control file..."
-# Determine dependencies based on whether electron was packaged
-DEPENDS="nodejs, npm, p7zip-full" # Base dependencies
-# Electron is now always packaged locally, so it's not listed as an external dependency.
-echo "Electron is packaged locally; not adding to external Depends list."
+# Since Electron is bundled, we need runtime libraries it depends on
+# For Ubuntu 25.10 and modern Debian-based systems
+DEPENDS="libasound2t64 | libasound2, libgtk-3-0, libnss3, libxss1, libxtst6, xdg-utils, ca-certificates"
+# Note: nodejs and npm are NOT runtime dependencies since Electron is bundled
+echo "Setting runtime dependencies for bundled Electron application"
 
 cat > "$PACKAGE_ROOT/DEBIAN/control" << EOF
 Package: $PACKAGE_NAME
@@ -189,8 +183,8 @@ Description: $DESCRIPTION
  Claude is an AI assistant from Anthropic.
  This package provides the desktop interface for Claude.
  .
- Supported on Debian-based Linux distributions (Debian, Ubuntu, Linux Mint, MX Linux, etc.)
- Requires: nodejs (>= 12.0.0), npm
+ Electron-based desktop application with full system integration.
+ Supports both X11 and Wayland display servers.
 EOF
 echo "✓ Control file created"
 
