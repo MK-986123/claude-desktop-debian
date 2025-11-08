@@ -253,8 +253,8 @@ if [ "$NODE_VERSION_OK" = false ]; then
         exit 1
     fi
     
-    # Use Node 24 LTS (latest as of the problem statement date)
-    NODE_VERSION_TO_INSTALL="24.0.0"
+    # Use Node 24 LTS (latest stable as of November 2024)
+    NODE_VERSION_TO_INSTALL="24.11.0"
     NODE_TARBALL="node-v${NODE_VERSION_TO_INSTALL}-linux-${NODE_ARCH}.tar.xz"
     NODE_URL="https://nodejs.org/dist/v${NODE_VERSION_TO_INSTALL}/${NODE_TARBALL}"
     NODE_INSTALL_DIR="$WORK_DIR/node"
@@ -322,8 +322,8 @@ fi
 if [ "$INSTALL_NEEDED" = true ]; then
     echo "Installing Electron and Asar locally into $WORK_DIR..."
     # Pin Electron to a stable version compatible with Node 24 and current security standards
-    # Electron 33.x is a stable release compatible with Node 24 (as of late 2024)
-    if ! npm install --no-save electron@^33.0.0 @electron/asar; then
+    # Electron 35.x is a stable release line (as of late 2024)
+    if ! npm install --no-save electron@^35.0.0 @electron/asar; then
         echo "❌ Failed to install Electron and/or Asar locally."
         cd "$PROJECT_ROOT"
         exit 1
