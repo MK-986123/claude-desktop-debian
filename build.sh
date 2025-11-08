@@ -383,7 +383,6 @@ if [ -z "$NUPKG_PATH_RELATIVE" ]; then
     echo "❌ Could not find AnthropicClaude nupkg file in $CLAUDE_EXTRACT_DIR"
     cd "$PROJECT_ROOT" && exit 1
 fi
-NUPKG_PATH="$CLAUDE_EXTRACT_DIR/$NUPKG_PATH_RELATIVE"
 echo "Found nupkg: $NUPKG_PATH_RELATIVE (in $CLAUDE_EXTRACT_DIR)"
 
 VERSION=$(echo "$NUPKG_PATH_RELATIVE" | LC_ALL=C grep -oP 'AnthropicClaude-\K[0-9]+\.[0-9]+\.[0-9]+(?=-full|-arm64-full)')
