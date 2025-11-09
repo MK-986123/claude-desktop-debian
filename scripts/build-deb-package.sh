@@ -139,11 +139,28 @@ fi
 APP_PATH="/usr/lib/$PACKAGE_NAME/app.asar"
 ELECTRON_ARGS=("\$APP_PATH")
 
-# Add Wayland-specific flags
+# Conditional sandbox: only disable if root or unprivileged user namespaces are disabled
+NEED_NO_SANDBOX=false
+if [ "\$(id -u)" -eq 0 ]; then
+    NEED_NO_SANDBOX=true
+    echo "Running as root, disabling sandbox" >> "\$LOG_FILE"
+else
+    # Check if unprivileged user namespaces are available
+    CLONE_SETTING="\$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || echo 1)"
+    if [ "\$CLONE_SETTING" = "0" ]; then
+        NEED_NO_SANDBOX=true
+        echo "Unprivileged user namespaces disabled, disabling sandbox" >> "\$LOG_FILE"
+    fi
+fi
+if [ "\$NEED_NO_SANDBOX" = true ]; then
+    ELECTRON_ARGS+=("--no-sandbox")
+fi
+
+# Add Wayland-specific flags (for Electron 38+, ozone-platform=auto is default, but we set explicitly)
 if [ "\$IS_WAYLAND" = true ]; then
     echo "Adding Wayland compatibility flags" >> "\$LOG_FILE"
-    ELECTRON_ARGS+=("--enable-features=UseOzonePlatform,WaylandWindowDecorations,GlobalShortcutsPortal")
     ELECTRON_ARGS+=("--ozone-platform=wayland")
+    ELECTRON_ARGS+=("--enable-features=WaylandWindowDecorations,GlobalShortcutsPortal")
     ELECTRON_ARGS+=("--enable-wayland-ime")
     ELECTRON_ARGS+=("--wayland-text-input-version=3")
     echo "Enabled native Wayland support with GlobalShortcuts Portal" >> "\$LOG_FILE"

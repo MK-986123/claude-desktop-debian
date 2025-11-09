@@ -1,6 +1,16 @@
 {
+  "name": "claude-desktop-debian",
+  "private": true,
   "devDependencies": {
     "@electron/asar": "^3.2.1",
-    "electron": "^35.0.0"
+    "electron": "^39.0.0"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "bash build.sh",
+    "build:deb": "bash build.sh --build deb",
+    "build:appimage": "bash build.sh --build appimage"
   }
 }

@@ -321,12 +321,15 @@ fi
 
 if [ "$INSTALL_NEEDED" = true ]; then
     echo "Installing Electron and Asar locally into $WORK_DIR..."
-    # Pin Electron to a stable version compatible with Node 24 and current security standards
-    # Electron 35.x is a stable release line (as of late 2024)
-    if ! npm install --no-save electron@^35.0.0 @electron/asar; then
-        echo "❌ Failed to install Electron and/or Asar locally."
-        cd "$PROJECT_ROOT"
-        exit 1
+    # Pin Electron to a currently supported version (38-40 are maintained as of late 2024/early 2025)
+    # Electron 39.x uses Chromium 140+ with proper Wayland auto-detection
+    if ! npm install --no-save electron@^39.0.0 @electron/asar; then
+        echo "⚠️ Failed to install Electron 39, trying Electron 38..."
+        if ! npm install --no-save electron@^38.0.0 @electron/asar; then
+            echo "❌ Failed to install Electron and/or Asar locally."
+            cd "$PROJECT_ROOT"
+            exit 1
+        fi
     fi
     echo "✓ Electron and Asar installation command finished."
 else
