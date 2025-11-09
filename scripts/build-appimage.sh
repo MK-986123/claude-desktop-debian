@@ -26,18 +26,22 @@ mkdir -p "$APPDIR_PATH/usr/share/icons/hicolor/256x256/apps"
 mkdir -p "$APPDIR_PATH/usr/share/applications"
 
 echo "📦 Staging application files into AppDir..."
-# Copy the core application files (asar, unpacked resources, node_modules if present)
-# Explicitly copy required components to ensure hidden files/dirs like .bin are included
-if [ -f "$APP_STAGING_DIR/app.asar" ]; then
-    cp -a "$APP_STAGING_DIR/app.asar" "$APPDIR_PATH/usr/lib/"
-fi
-if [ -d "$APP_STAGING_DIR/app.asar.unpacked" ]; then
-    cp -a "$APP_STAGING_DIR/app.asar.unpacked" "$APPDIR_PATH/usr/lib/"
-fi
+# Copy node_modules first to set up Electron directory structure
 if [ -d "$APP_STAGING_DIR/node_modules" ]; then
     echo "Copying node_modules from staging to AppDir..."
     cp -a "$APP_STAGING_DIR/node_modules" "$APPDIR_PATH/usr/lib/"
 fi
+
+# Install app.asar in Electron's resources directory where process.resourcesPath points
+RESOURCES_DIR="$APPDIR_PATH/usr/lib/node_modules/electron/dist/resources"
+mkdir -p "$RESOURCES_DIR"
+if [ -f "$APP_STAGING_DIR/app.asar" ]; then
+    cp -a "$APP_STAGING_DIR/app.asar" "$RESOURCES_DIR/"
+fi
+if [ -d "$APP_STAGING_DIR/app.asar.unpacked" ]; then
+    cp -a "$APP_STAGING_DIR/app.asar.unpacked" "$RESOURCES_DIR/"
+fi
+echo "✓ Application files copied to Electron resources directory"
 
 # Ensure Electron is bundled within the AppDir for portability
 # Check if electron was copied into the staging dir's node_modules
@@ -100,7 +104,8 @@ fi
 # Path to the bundled Electron executable
 # Use the path relative to AppRun within the 'electron/dist' module directory
 ELECTRON_EXEC="\$APPDIR/usr/lib/node_modules/electron/dist/electron"
-APP_PATH="\$APPDIR/usr/lib/app.asar"
+# App is now in Electron's resources directory
+APP_PATH="\$APPDIR/usr/lib/node_modules/electron/dist/resources/app.asar"
 
 # Base command arguments array
 # Add --no-sandbox flag to avoid sandbox issues within AppImage
@@ -113,24 +118,31 @@ if [ "\$IS_WAYLAND" = true ]; then
   ELECTRON_ARGS+=("--ozone-platform=wayland")
   ELECTRON_ARGS+=("--enable-wayland-ime")
   ELECTRON_ARGS+=("--wayland-text-input-version=3")
+else
+  # X11 session - ensure native window decorations
+  echo "AppRun: X11 session detected, enabling native window decorations."
 fi
 
-# Change to the application resources directory (where app.asar is)
-cd "\$APPDIR/usr/lib" || exit 1
+# Force disable custom titlebar for all sessions
+ELECTRON_ARGS+=("--disable-features=CustomTitlebar")
+# Try to force native frame
+export ELECTRON_USE_SYSTEM_TITLE_BAR=1
 
-# Define log file path in user's home directory
-LOG_FILE="\$HOME/claude-desktop-launcher.log"
+# Define log file path following XDG Base Directory specification
+LOG_DIR="\${XDG_CACHE_HOME:-\$HOME/.cache}/claude-desktop-debian"
+mkdir -p "\$LOG_DIR"
+LOG_FILE="\$LOG_DIR/launcher.log"
 
 # Change to HOME directory before exec'ing Electron to avoid CWD permission issues
 cd "\$HOME" || exit 1
 
 # Execute Electron with app path, flags, and script arguments passed to AppRun
-# Redirect stdout and stderr to the log file (append)
-echo "AppRun: Executing \$ELECTRON_EXEC \${ELECTRON_ARGS[@]} \$@ >> \$LOG_FILE 2>&1"
-exec "\$ELECTRON_EXEC" "\${ELECTRON_ARGS[@]}" "\$@" >> "\$LOG_FILE" 2>&1
+# Redirect stdout and stderr to the log file (reset on each launch)
+echo "AppRun: Executing \$ELECTRON_EXEC \${ELECTRON_ARGS[@]} \$@ > \$LOG_FILE 2>&1"
+exec "\$ELECTRON_EXEC" "\${ELECTRON_ARGS[@]}" "\$@" > "\$LOG_FILE" 2>&1
 EOF
 chmod +x "$APPDIR_PATH/AppRun"
-echo "✓ AppRun script created (with logging to \$HOME/claude-desktop-launcher.log, --no-sandbox, and CWD set to \$HOME)"
+echo "✓ AppRun script created (with logging to \$XDG_CACHE_HOME/claude-desktop-debian/launcher.log, --no-sandbox, and CWD set to \$HOME)"
 
 # --- Create Desktop Entry (Bundled inside AppDir) ---
 echo "📝 Creating bundled desktop entry..."

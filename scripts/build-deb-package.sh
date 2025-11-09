@@ -58,15 +58,19 @@ echo "✓ Icons installed"
 
 # --- Copy Application Files ---
 echo "📦 Copying application files from $APP_STAGING_DIR..."
-cp "$APP_STAGING_DIR/app.asar" "$INSTALL_DIR/lib/$PACKAGE_NAME/"
-cp -r "$APP_STAGING_DIR/app.asar.unpacked" "$INSTALL_DIR/lib/$PACKAGE_NAME/"
 
-# Copy local electron if it was packaged (check if node_modules exists in staging)
+# Copy local electron first if it was packaged (check if node_modules exists in staging)
 if [ -d "$APP_STAGING_DIR/node_modules" ]; then
     echo "Copying packaged electron..."
     cp -r "$APP_STAGING_DIR/node_modules" "$INSTALL_DIR/lib/$PACKAGE_NAME/"
 fi
-echo "✓ Application files copied"
+
+# Install app.asar in Electron's resources directory where process.resourcesPath points
+RESOURCES_DIR="$INSTALL_DIR/lib/$PACKAGE_NAME/node_modules/electron/dist/resources"
+mkdir -p "$RESOURCES_DIR"
+cp "$APP_STAGING_DIR/app.asar" "$RESOURCES_DIR/"
+cp -r "$APP_STAGING_DIR/app.asar.unpacked" "$RESOURCES_DIR/"
+echo "✓ Application files copied to Electron resources directory"
 
 # --- Create Desktop Entry ---
 echo "📝 Creating desktop entry..."
@@ -87,8 +91,10 @@ echo "✓ Desktop entry created"
 echo "🚀 Creating launcher script..."
 cat > "$INSTALL_DIR/bin/claude-desktop" << EOF
 #!/bin/bash
-LOG_FILE="\$HOME/claude-desktop-launcher.log"
-echo "--- Claude Desktop Launcher Start ---" >> "\$LOG_FILE"
+LOG_DIR="\${XDG_CACHE_HOME:-\$HOME/.cache}/claude-desktop-debian"
+mkdir -p "\$LOG_DIR"
+LOG_FILE="\$LOG_DIR/launcher.log"
+echo "--- Claude Desktop Launcher Start ---" > "\$LOG_FILE"
 echo "Timestamp: \$(date)" >> "\$LOG_FILE"
 echo "Arguments: \$@" >> "\$LOG_FILE"
 
@@ -139,7 +145,8 @@ else
 fi
 
 # Base command arguments array, starting with app path
-APP_PATH="/usr/lib/$PACKAGE_NAME/app.asar"
+# App is now in Electron's resources directory
+APP_PATH="/usr/lib/$PACKAGE_NAME/node_modules/electron/dist/resources/app.asar"
 ELECTRON_ARGS=("\$APP_PATH")
 
 # Add compatibility flags
@@ -152,9 +159,17 @@ if [ "\$IS_WAYLAND" = true ]; then
   ELECTRON_ARGS+=("--enable-wayland-ime")
   ELECTRON_ARGS+=("--wayland-text-input-version=3")
   echo "Enabled native Wayland support with GlobalShortcuts Portal" >> "\$LOG_FILE"
+else
+  # X11 session - ensure native window decorations
+  echo "X11 session detected, enabling native window decorations" >> "\$LOG_FILE"
 fi
 
-# Change to the application directory
+# Force disable custom titlebar for all sessions
+ELECTRON_ARGS+=("--disable-features=CustomTitlebar")
+# Try to force native frame
+export ELECTRON_USE_SYSTEM_TITLE_BAR=1
+
+# Change to the application directory (not resources dir - app needs this as base)
 APP_DIR="/usr/lib/$PACKAGE_NAME"
 echo "Changing directory to \$APP_DIR" >> "\$LOG_FILE"
 cd "\$APP_DIR" || { echo "Failed to cd to \$APP_DIR" >> "\$LOG_FILE"; exit 1; }

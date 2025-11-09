@@ -374,39 +374,147 @@ if ! 7z x -y "$NUPKG_PATH_RELATIVE"; then     echo "❌ Failed to extract nupkg"
 fi
 echo "✓ Resources extracted from nupkg"
 
-EXE_RELATIVE_PATH="lib/net45/claude.exe" # Check if this path is correct for arm64 too
-if [ ! -f "$EXE_RELATIVE_PATH" ]; then
-    echo "❌ Cannot find claude.exe at expected path within extraction dir: $CLAUDE_EXTRACT_DIR/$EXE_RELATIVE_PATH"
-    cd "$PROJECT_ROOT" && exit 1
-fi
-echo "🎨 Processing icons from $EXE_RELATIVE_PATH..."
-if ! wrestool -x -t 14 "$EXE_RELATIVE_PATH" -o claude.ico; then     echo "❌ Failed to extract icons from exe"
-    cd "$PROJECT_ROOT" && exit 1
-fi
-
-if ! icotool -x claude.ico; then     echo "❌ Failed to convert icons"
-    cd "$PROJECT_ROOT" && exit 1
-fi
-cp claude_*.png "$WORK_DIR/"
-echo "✓ Icons processed and copied to $WORK_DIR"
-
 echo "⚙️ Processing app.asar..."
 cp "$CLAUDE_EXTRACT_DIR/lib/net45/resources/app.asar" "$APP_STAGING_DIR/"
-cp -a "$CLAUDE_EXTRACT_DIR/lib/net45/resources/app.asar.unpacked" "$APP_STAGING_DIR/" 
-cd "$APP_STAGING_DIR" 
+cp -a "$CLAUDE_EXTRACT_DIR/lib/net45/resources/app.asar.unpacked" "$APP_STAGING_DIR/"
+cd "$APP_STAGING_DIR"
 "$ASAR_EXEC" extract app.asar app.asar.contents
 
+echo "Creating BrowserWindow frame fix wrapper..."
+# Get the original main entry point first
+ORIGINAL_MAIN=$(node -e "const pkg = require('./app.asar.contents/package.json'); console.log(pkg.main);")
+echo "Original main entry: $ORIGINAL_MAIN"
+
+# Create the wrapper that intercepts electron module
+cat > app.asar.contents/frame-fix-wrapper.js << 'EOFFIX'
+// Inject frame fix before main app loads
+const Module = require('module');
+const originalRequire = Module.prototype.require;
+
+console.log('[Frame Fix] Wrapper loaded');
+
+Module.prototype.require = function(id) {
+  const module = originalRequire.apply(this, arguments);
+
+  if (id === 'electron') {
+    console.log('[Frame Fix] Intercepting electron module');
+    const OriginalBrowserWindow = module.BrowserWindow;
+
+    module.BrowserWindow = class BrowserWindowWithFrame extends OriginalBrowserWindow {
+      constructor(options) {
+        console.log('[Frame Fix] BrowserWindow constructor called');
+        if (process.platform === 'linux') {
+          options = options || {};
+          const originalFrame = options.frame;
+          // Force native frame
+          options.frame = true;
+          // Remove custom titlebar options
+          delete options.titleBarStyle;
+          delete options.titleBarOverlay;
+          console.log(`[Frame Fix] Modified frame from ${originalFrame} to true`);
+        }
+        super(options);
+      }
+    };
+
+    // Copy static methods and properties (but NOT prototype, that's already set by extends)
+    for (const key of Object.getOwnPropertyNames(OriginalBrowserWindow)) {
+      if (key !== 'prototype' && key !== 'length' && key !== 'name') {
+        try {
+          const descriptor = Object.getOwnPropertyDescriptor(OriginalBrowserWindow, key);
+          if (descriptor) {
+            Object.defineProperty(module.BrowserWindow, key, descriptor);
+          }
+        } catch (e) {
+          // Ignore errors for non-configurable properties
+        }
+      }
+    }
+  }
+
+  return module;
+};
+EOFFIX
+
+# Create new entry point that loads fix then original main
+cat > app.asar.contents/frame-fix-entry.js << EOFENTRY
+// Load frame fix first
+require('./frame-fix-wrapper.js');
+// Then load original main
+require('./${ORIGINAL_MAIN}');
+EOFENTRY
+
+echo "Searching and patching BrowserWindow creation in main process files..."
+# Find all JavaScript files that create BrowserWindow
+find app.asar.contents/.vite/build -type f -name "*.js" -exec grep -l "BrowserWindow" {} \; > /tmp/bw-files.txt
+
+# Patch each file to force frame: true
+while IFS= read -r file; do
+    if [ -f "$file" ]; then
+        echo "Patching $file for native frames..."
+        # Replace frame:false with frame:true
+        sed -i 's/frame[[:space:]]*:[[:space:]]*false/frame:true/g' "$file"
+        sed -i 's/frame[[:space:]]*:[[:space:]]*!0/frame:true/g' "$file"
+        sed -i 's/frame[[:space:]]*:[[:space:]]*!1/frame:true/g' "$file"
+        # Replace titleBarStyle with empty to disable custom titlebar
+        sed -i 's/titleBarStyle[[:space:]]*:[[:space:]]*[^,}]*/titleBarStyle:""/g' "$file"
+        echo "✓ Patched $file"
+    fi
+done < /tmp/bw-files.txt
+rm -f /tmp/bw-files.txt
+
+echo "Modifying package.json to load frame fix..."
+# Update package.json to use our entry point
+node -e "
+const fs = require('fs');
+const pkg = require('./app.asar.contents/package.json');
+pkg.originalMain = pkg.main;
+pkg.main = 'frame-fix-entry.js';
+fs.writeFileSync('./app.asar.contents/package.json', JSON.stringify(pkg, null, 2));
+console.log('Updated package.json main to frame-fix-entry.js');
+"
+
 echo "Creating stub native module..."
-cat > app.asar.contents/node_modules/claude-native/index.js << EOF
-// Stub implementation of claude-native using KeyboardKey enum values
+cat > app.asar.contents/node_modules/claude-native/index.js << 'EOF'
+// Stub implementation of claude-native for Linux
 const KeyboardKey = { Backspace: 43, Tab: 280, Enter: 261, Shift: 272, Control: 61, Alt: 40, CapsLock: 56, Escape: 85, Space: 276, PageUp: 251, PageDown: 250, End: 83, Home: 154, LeftArrow: 175, UpArrow: 282, RightArrow: 262, DownArrow: 81, Delete: 79, Meta: 187 };
 Object.freeze(KeyboardKey);
-module.exports = { getWindowsVersion: () => "10.0.0", setWindowEffect: () => {}, removeWindowEffect: () => {}, getIsMaximized: () => false, flashFrame: () => {}, clearFlashFrame: () => {}, showNotification: () => {}, setProgressBar: () => {}, clearProgressBar: () => {}, setOverlayIcon: () => {}, clearOverlayIcon: () => {}, KeyboardKey };
+
+// AuthRequest stub - not available on Linux, will cause fallback to system browser
+class AuthRequest {
+  static isAvailable() {
+    return false;
+  }
+  
+  async start(url, scheme, windowHandle) {
+    throw new Error('AuthRequest not available on Linux');
+  }
+  
+  cancel() {
+    // no-op
+  }
+}
+
+module.exports = { 
+  getWindowsVersion: () => "10.0.0", 
+  setWindowEffect: () => {}, 
+  removeWindowEffect: () => {}, 
+  getIsMaximized: () => false, 
+  flashFrame: () => {}, 
+  clearFlashFrame: () => {}, 
+  showNotification: () => {}, 
+  setProgressBar: () => {}, 
+  clearProgressBar: () => {}, 
+  setOverlayIcon: () => {}, 
+  clearOverlayIcon: () => {}, 
+  KeyboardKey,
+  AuthRequest
+};
 EOF
 
 mkdir -p app.asar.contents/resources
 mkdir -p app.asar.contents/resources/i18n
-cp "$CLAUDE_EXTRACT_DIR/lib/net45/resources/Tray"* app.asar.contents/resources/
+
 cp "$CLAUDE_EXTRACT_DIR/lib/net45/resources/"*-*.json app.asar.contents/resources/i18n/
 
 echo "##############################################################"
@@ -452,14 +560,98 @@ else
 fi
 echo "##############################################################"
 
+echo "Patching tray menu handler function to prevent concurrent calls and add DBus cleanup delay..."
+
+# Step 1: Extract function name from menuBarEnabled listener
+# Pattern: on("menuBarEnabled",()=>{FUNCNAME()})
+TRAY_FUNC=$(grep -oP 'on\("menuBarEnabled",\(\)=>\{\K\w+(?=\(\)\})' app.asar.contents/.vite/build/index.js)
+if [ -z "$TRAY_FUNC" ]; then
+    echo "❌ Failed to extract tray menu function name"
+    cd "$PROJECT_ROOT" && exit 1
+fi
+echo "  Found tray function: $TRAY_FUNC"
+
+# Step 2: Extract tray variable name (the variable set to null before the function)
+# Pattern: });let TRAYVAR=null;function FUNCNAME (may or may not be async yet)
+TRAY_VAR=$(grep -oP "\}\);let \K\w+(?==null;(?:async )?function ${TRAY_FUNC})" app.asar.contents/.vite/build/index.js)
+if [ -z "$TRAY_VAR" ]; then
+    echo "❌ Failed to extract tray variable name"
+    cd "$PROJECT_ROOT" && exit 1
+fi
+echo "  Found tray variable: $TRAY_VAR"
+
+# Step 3: Make the function async (if not already)
+sed -i "s/function ${TRAY_FUNC}(){/async function ${TRAY_FUNC}(){/g" app.asar.contents/.vite/build/index.js
+
+# Step 4: Extract first const variable name in the function
+# Pattern: async function FUNCNAME(){if(FUNCNAME._running)...const VARNAME=
+# (after mutex is added) or async function FUNCNAME(){const VARNAME= (before mutex)
+FIRST_CONST=$(grep -oP "async function ${TRAY_FUNC}\(\)\{(?:if\(${TRAY_FUNC}\._running\)[^}]*?)?const \K\w+(?==)" app.asar.contents/.vite/build/index.js | head -1)
+if [ -z "$FIRST_CONST" ]; then
+    echo "❌ Failed to extract first const variable name in function"
+    cd "$PROJECT_ROOT" && exit 1
+fi
+echo "  Found first const variable: $FIRST_CONST"
+
+# Step 5: Add mutex guard at start of function (only if not already present)
+if ! grep -q "${TRAY_FUNC}._running" app.asar.contents/.vite/build/index.js; then
+    sed -i "s/async function ${TRAY_FUNC}(){const ${FIRST_CONST}=/async function ${TRAY_FUNC}(){if(${TRAY_FUNC}._running)return;${TRAY_FUNC}._running=true;setTimeout(()=>${TRAY_FUNC}._running=false,500);const ${FIRST_CONST}=/g" app.asar.contents/.vite/build/index.js
+    echo "  ✓ Added mutex guard to ${TRAY_FUNC}()"
+else
+    echo "  ℹ️  Mutex guard already present in ${TRAY_FUNC}()"
+fi
+
+# Step 6: Add delay after Tray destroy for DBus cleanup (only if not already present)
+if ! grep -q "await new Promise.*setTimeout" app.asar.contents/.vite/build/index.js | grep -q "${TRAY_VAR}"; then
+    # Pattern: TRAYVAR&&(TRAYVAR.destroy(),TRAYVAR=null)
+    # Replace: TRAYVAR&&(TRAYVAR.destroy(),TRAYVAR=null,await new Promise(r=>setTimeout(r,50)))
+    sed -i "s/${TRAY_VAR}\&\&(${TRAY_VAR}\.destroy(),${TRAY_VAR}=null)/${TRAY_VAR}\&\&(${TRAY_VAR}.destroy(),${TRAY_VAR}=null,await new Promise(r=>setTimeout(r,50)))/g" app.asar.contents/.vite/build/index.js
+    echo "  ✓ Added DBus cleanup delay after ${TRAY_VAR}.destroy()"
+else
+    echo "  ℹ️  DBus cleanup delay already present for ${TRAY_VAR}"
+fi
+
+echo "✓ Tray menu handler patched: function=${TRAY_FUNC}, tray_var=${TRAY_VAR}, check_var=${FIRST_CONST}"
+echo "##############################################################"
+
 "$ASAR_EXEC" pack app.asar.contents app.asar
 
 mkdir -p "$APP_STAGING_DIR/app.asar.unpacked/node_modules/claude-native"
-cat > "$APP_STAGING_DIR/app.asar.unpacked/node_modules/claude-native/index.js" << EOF
-// Stub implementation of claude-native using KeyboardKey enum values
+cat > "$APP_STAGING_DIR/app.asar.unpacked/node_modules/claude-native/index.js" << 'EOF'
+// Stub implementation of claude-native for Linux
 const KeyboardKey = { Backspace: 43, Tab: 280, Enter: 261, Shift: 272, Control: 61, Alt: 40, CapsLock: 56, Escape: 85, Space: 276, PageUp: 251, PageDown: 250, End: 83, Home: 154, LeftArrow: 175, UpArrow: 282, RightArrow: 262, DownArrow: 81, Delete: 79, Meta: 187 };
 Object.freeze(KeyboardKey);
-module.exports = { getWindowsVersion: () => "10.0.0", setWindowEffect: () => {}, removeWindowEffect: () => {}, getIsMaximized: () => false, flashFrame: () => {}, clearFlashFrame: () => {}, showNotification: () => {}, setProgressBar: () => {}, clearProgressBar: () => {}, setOverlayIcon: () => {}, clearOverlayIcon: () => {}, KeyboardKey };
+
+// AuthRequest stub - not available on Linux, will cause fallback to system browser
+class AuthRequest {
+  static isAvailable() {
+    return false;
+  }
+  
+  async start(url, scheme, windowHandle) {
+    throw new Error('AuthRequest not available on Linux');
+  }
+  
+  cancel() {
+    // no-op
+  }
+}
+
+module.exports = { 
+  getWindowsVersion: () => "10.0.0", 
+  setWindowEffect: () => {}, 
+  removeWindowEffect: () => {}, 
+  getIsMaximized: () => false, 
+  flashFrame: () => {}, 
+  clearFlashFrame: () => {}, 
+  showNotification: () => {}, 
+  setProgressBar: () => {}, 
+  clearProgressBar: () => {}, 
+  setOverlayIcon: () => {}, 
+  clearOverlayIcon: () => {}, 
+  KeyboardKey,
+  AuthRequest
+};
 EOF
 
 echo "Copying chosen electron installation to staging area..."
@@ -487,8 +679,42 @@ else
     echo "⚠️  Warning: Electron resources directory not found at $ELECTRON_RESOURCES_SRC"
 fi
 
-# Copy Claude locale JSON files to Electron resources directory where they're expected
+echo -e "\033[1;36m--- Icon Processing ---\033[0m"
+# Extract application icons from Windows executable
+cd "$CLAUDE_EXTRACT_DIR"
+EXE_RELATIVE_PATH="lib/net45/claude.exe"
+if [ ! -f "$EXE_RELATIVE_PATH" ]; then
+    echo "❌ Cannot find claude.exe at expected path within extraction dir: $CLAUDE_EXTRACT_DIR/$EXE_RELATIVE_PATH"
+    cd "$PROJECT_ROOT" && exit 1
+fi
+echo "🎨 Extracting application icons from $EXE_RELATIVE_PATH..."
+if ! wrestool -x -t 14 "$EXE_RELATIVE_PATH" -o claude.ico; then
+    echo "❌ Failed to extract icons from exe"
+    cd "$PROJECT_ROOT" && exit 1
+fi
+
+if ! icotool -x claude.ico; then
+    echo "❌ Failed to convert icons"
+    cd "$PROJECT_ROOT" && exit 1
+fi
+cp claude_*.png "$WORK_DIR/"
+echo "✓ Application icons extracted and copied to $WORK_DIR"
+
+cd "$PROJECT_ROOT"
+
+# Copy tray icon files to Electron resources directory for runtime access
 CLAUDE_LOCALE_SRC="$CLAUDE_EXTRACT_DIR/lib/net45/resources"
+echo "🖼️  Copying tray icon files to Electron resources directory..."
+if [ -d "$CLAUDE_LOCALE_SRC" ]; then
+    # Tray icons must be in filesystem (not inside asar) for Electron Tray API to access them
+    cp "$CLAUDE_LOCALE_SRC/Tray"* "$ELECTRON_RESOURCES_DEST/" 2>/dev/null || echo "⚠️  Warning: No tray icon files found at $CLAUDE_LOCALE_SRC/Tray*"
+    echo "✓ Tray icon files copied to Electron resources directory"
+else
+    echo "⚠️  Warning: Claude resources directory not found at $CLAUDE_LOCALE_SRC"
+fi
+echo -e "\033[1;36m--- End Icon Processing ---\033[0m"
+
+# Copy Claude locale JSON files to Electron resources directory where they're expected
 echo "Copying Claude locale JSON files to Electron resources directory..."
 if [ -d "$CLAUDE_LOCALE_SRC" ]; then
     # Copy Claude's locale JSON files to the Electron resources directory
