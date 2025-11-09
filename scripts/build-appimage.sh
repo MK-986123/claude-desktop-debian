@@ -66,83 +66,69 @@ set -e
 
 # Find the location of the AppRun script and the AppImage file itself
 APPDIR=\$(dirname "\$0")
-# Try to get the absolute path of the AppImage file being run
-# $APPIMAGE is often set by the AppImage runtime, otherwise try readlink
-APPIMAGE_PATH="\${APPIMAGE:-}"
-if [ -z "\$APPIMAGE_PATH" ]; then
-    # Find the AppRun script itself, which should be $0
-    # Use readlink -f to get the absolute path, handling symlinks
-    # Go up one level from AppRun's dir to get the AppImage path (usually)
-    # This might be fragile if AppRun is not at the root, but it's standard.
-    APPIMAGE_PATH=\$(readlink -f "\$APPDIR/../$(basename "$APPDIR" .AppDir).AppImage" 2>/dev/null || readlink -f "\$0" 2>/dev/null)
-    # As a final fallback, just use $0, hoping it's the AppImage path
-    if [ -z "\$APPIMAGE_PATH" ] || [ ! -f "\$APPIMAGE_PATH" ]; then
-        APPIMAGE_PATH="\$0"
-    fi
-fi
 
-# --- Desktop Integration (Handled by Gear Lever) ---
-# The bundled .desktop file (claude-desktop-appimage.desktop) inside the AppImage
-# contains the necessary MimeType=x-scheme-handler/claude; entry.
-# Gear Lever (or similar tools) will use this file to integrate
-# the AppImage with the system, including setting up the URI scheme handler,
-# if the user chooses to integrate. No manual registration is needed here.
-# --- End Desktop Integration ---
+# Define log file path in user's home directory
+LOG_FILE="\$HOME/claude-desktop-launcher.log"
 
-
-# Set up environment variables if needed (e.g., LD_LIBRARY_PATH)
-# export LD_LIBRARY_PATH="\$APPDIR/usr/lib:\$LD_LIBRARY_PATH"
+echo "--- Claude Desktop AppImage Launcher Start ---" >> "\$LOG_FILE"
+echo "Timestamp: \$(date)" >> "\$LOG_FILE"
+echo "Arguments: \$@" >> "\$LOG_FILE"
 
 export ELECTRON_FORCE_IS_PACKAGED=true
 
-# Detect if Wayland is likely running
+# Detect Wayland session
 IS_WAYLAND=false
-if [ ! -z "\$WAYLAND_DISPLAY" ]; then
-  IS_WAYLAND=true
+if [ -n "\$WAYLAND_DISPLAY" ]; then
+    IS_WAYLAND=true
+    echo "Wayland detected (WAYLAND_DISPLAY=\$WAYLAND_DISPLAY)" >> "\$LOG_FILE"
+elif [ "\${XDG_SESSION_TYPE:-}" = "wayland" ]; then
+    IS_WAYLAND=true
+    echo "Wayland detected (XDG_SESSION_TYPE=wayland)" >> "\$LOG_FILE"
 fi
 
 # Path to the bundled Electron executable
-# Use the path relative to AppRun within the 'electron/dist' module directory
 ELECTRON_EXEC="\$APPDIR/usr/lib/node_modules/electron/dist/electron"
 # App is now in Electron's resources directory
 APP_PATH="\$APPDIR/usr/lib/node_modules/electron/dist/resources/app.asar"
 
 # Base command arguments array
-# Add --no-sandbox flag to avoid sandbox issues within AppImage
-ELECTRON_ARGS=("--no-sandbox" "\$APP_PATH")
-
-# Add Wayland flags if Wayland is detected
-if [ "\$IS_WAYLAND" = true ]; then
-  echo "AppRun: Wayland detected, adding flags."
-  ELECTRON_ARGS+=("--enable-features=UseOzonePlatform,WaylandWindowDecorations,GlobalShortcutsPortal")
-  ELECTRON_ARGS+=("--ozone-platform=wayland")
-  ELECTRON_ARGS+=("--enable-wayland-ime")
-  ELECTRON_ARGS+=("--wayland-text-input-version=3")
+# Conditional sandbox for AppImage: check if we can use sandbox
+ELECTRON_ARGS=("\$APP_PATH")
+NEED_NO_SANDBOX=false
+if [ "\$(id -u)" -eq 0 ]; then
+    NEED_NO_SANDBOX=true
+    echo "Running as root, disabling sandbox" >> "\$LOG_FILE"
 else
-  # X11 session - ensure native window decorations
-  echo "AppRun: X11 session detected, enabling native window decorations."
+    # Check if unprivileged user namespaces are available
+    CLONE_SETTING="\$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || echo 1)"
+    if [ "\$CLONE_SETTING" = "0" ]; then
+        NEED_NO_SANDBOX=true
+        echo "Unprivileged user namespaces disabled, disabling sandbox" >> "\$LOG_FILE"
+    fi
+fi
+if [ "\$NEED_NO_SANDBOX" = true ]; then
+    ELECTRON_ARGS+=("--no-sandbox")
 fi
 
-# Force disable custom titlebar for all sessions
-ELECTRON_ARGS+=("--disable-features=CustomTitlebar")
-# Try to force native frame
-export ELECTRON_USE_SYSTEM_TITLE_BAR=1
-
-# Define log file path following XDG Base Directory specification
-LOG_DIR="\${XDG_CACHE_HOME:-\$HOME/.cache}/claude-desktop-debian"
-mkdir -p "\$LOG_DIR"
-LOG_FILE="\$LOG_DIR/launcher.log"
+# Add Wayland-specific flags (for Electron 38+, --ozone-platform=auto is default)
+if [ "\$IS_WAYLAND" = true ]; then
+    echo "Adding Wayland compatibility flags" >> "\$LOG_FILE"
+    ELECTRON_ARGS+=("--ozone-platform=wayland")
+    ELECTRON_ARGS+=("--enable-features=WaylandWindowDecorations,GlobalShortcutsPortal")
+    ELECTRON_ARGS+=("--enable-wayland-ime")
+    ELECTRON_ARGS+=("--wayland-text-input-version=3")
+    echo "Enabled native Wayland support with GlobalShortcuts Portal" >> "\$LOG_FILE"
+fi
 
 # Change to HOME directory before exec'ing Electron to avoid CWD permission issues
 cd "\$HOME" || exit 1
 
-# Execute Electron with app path, flags, and script arguments passed to AppRun
-# Redirect stdout and stderr to the log file (reset on each launch)
-echo "AppRun: Executing \$ELECTRON_EXEC \${ELECTRON_ARGS[@]} \$@ > \$LOG_FILE 2>&1"
-exec "\$ELECTRON_EXEC" "\${ELECTRON_ARGS[@]}" "\$@" > "\$LOG_FILE" 2>&1
+# Execute Electron with app path, flags, and script arguments
+echo "Executing: \$ELECTRON_EXEC \${ELECTRON_ARGS[@]} \$@" >> "\$LOG_FILE"
+exec "\$ELECTRON_EXEC" "\${ELECTRON_ARGS[@]}" "\$@" >> "\$LOG_FILE" 2>&1
 EOF
 chmod +x "$APPDIR_PATH/AppRun"
-echo "✓ AppRun script created (with logging to \$XDG_CACHE_HOME/claude-desktop-debian/launcher.log, --no-sandbox, and CWD set to \$HOME)"
+echo "✓ AppRun script created (with logging to \$HOME/claude-desktop-launcher.log, --no-sandbox, and Wayland support)"
 
 # --- Create Desktop Entry (Bundled inside AppDir) ---
 echo "📝 Creating bundled desktop entry..."

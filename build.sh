@@ -203,17 +203,35 @@ mkdir -p "$APP_STAGING_DIR"
 
 echo -e "\033[1;36m--- Node.js Setup ---\033[0m"
 echo "Checking Node.js version..."
+
+# Allow override via environment variables
+# CLAUDE_NODE_MIN_MAJOR: minimum required Node.js major version (default: 24 for Ubuntu 25.10)
+# CLAUDE_NODE_PATH: path to a specific Node.js installation to use
+REQUIRED_NODE_MAJOR="${CLAUDE_NODE_MIN_MAJOR:-24}"
+
 NODE_VERSION_OK=false
+
+# Check if a custom Node.js path is provided
+if [ -n "${CLAUDE_NODE_PATH:-}" ]; then
+    echo "Using custom Node.js path: $CLAUDE_NODE_PATH"
+    export PATH="$CLAUDE_NODE_PATH/bin:$PATH"
+fi
+
+# Check current Node.js version
 if command -v node &> /dev/null; then
-    NODE_VERSION=$(node --version | cut -d'v' -f2)
-    NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d'.' -f1)
-    echo "System Node.js version: v$NODE_VERSION"
-    
-    if [ "$NODE_MAJOR" -ge 20 ]; then
-        echo "✓ System Node.js version is adequate (v$NODE_VERSION)"
-        NODE_VERSION_OK=true
+    CURRENT_NODE_VERSION_RAW=$(node -v 2>/dev/null || echo "")
+    if [ -n "$CURRENT_NODE_VERSION_RAW" ]; then
+        CURRENT_NODE_MAJOR=$(printf "%s" "$CURRENT_NODE_VERSION_RAW" | sed 's/^v//' | cut -d. -f1)
+        echo "System Node.js version: $CURRENT_NODE_VERSION_RAW (major: $CURRENT_NODE_MAJOR)"
+        
+        if [ "$CURRENT_NODE_MAJOR" -ge "$REQUIRED_NODE_MAJOR" ]; then
+            echo "✓ Node.js version $CURRENT_NODE_VERSION_RAW satisfies the requirement (>= v$REQUIRED_NODE_MAJOR)"
+            NODE_VERSION_OK=true
+        else
+            echo "⚠️ Detected Node $CURRENT_NODE_VERSION_RAW which is older than required major $REQUIRED_NODE_MAJOR"
+        fi
     else
-        echo "⚠️ System Node.js version is too old (v$NODE_VERSION). Need v20+"
+        echo "⚠️ Could not determine Node.js version"
     fi
 else
     echo "⚠️ Node.js not found in system"
@@ -221,7 +239,9 @@ fi
 
 # If system Node.js is not adequate, install a local copy
 if [ "$NODE_VERSION_OK" = false ]; then
-    echo "Installing Node.js v20 locally in build directory..."
+    echo "Installing Node.js v24 LTS locally in build directory..."
+    echo "On Ubuntu 25.10 you should normally be able to install Node 24 from system packages or a trusted upstream."
+    echo "For automated builds, prefer a version manager or a pinned tarball from nodejs.org."
     
     # Determine Node.js download URL based on architecture
     if [ "$ARCHITECTURE" = "amd64" ]; then
@@ -233,7 +253,8 @@ if [ "$NODE_VERSION_OK" = false ]; then
         exit 1
     fi
     
-    NODE_VERSION_TO_INSTALL="20.18.1"
+    # Use Node 24 LTS (latest stable as of November 2024)
+    NODE_VERSION_TO_INSTALL="24.11.0"
     NODE_TARBALL="node-v${NODE_VERSION_TO_INSTALL}-linux-${NODE_ARCH}.tar.xz"
     NODE_URL="https://nodejs.org/dist/v${NODE_VERSION_TO_INSTALL}/${NODE_TARBALL}"
     NODE_INSTALL_DIR="$WORK_DIR/node"
@@ -300,10 +321,15 @@ fi
 
 if [ "$INSTALL_NEEDED" = true ]; then
     echo "Installing Electron and Asar locally into $WORK_DIR..."
-        if ! npm install --no-save electron @electron/asar; then
-        echo "❌ Failed to install Electron and/or Asar locally."
-        cd "$PROJECT_ROOT"
-        exit 1
+    # Pin Electron to a currently supported version (38-40 are maintained as of late 2024/early 2025)
+    # Electron 39.x uses Chromium 140+ with proper Wayland auto-detection
+    if ! npm install --no-save electron@^39.0.0 @electron/asar; then
+        echo "⚠️ Failed to install Electron 39, trying Electron 38..."
+        if ! npm install --no-save electron@^38.0.0 @electron/asar; then
+            echo "❌ Failed to install Electron and/or Asar locally."
+            cd "$PROJECT_ROOT"
+            exit 1
+        fi
     fi
     echo "✓ Electron and Asar installation command finished."
 else
@@ -360,7 +386,7 @@ if [ -z "$NUPKG_PATH_RELATIVE" ]; then
     echo "❌ Could not find AnthropicClaude nupkg file in $CLAUDE_EXTRACT_DIR"
     cd "$PROJECT_ROOT" && exit 1
 fi
-NUPKG_PATH="$CLAUDE_EXTRACT_DIR/$NUPKG_PATH_RELATIVE" echo "Found nupkg: $NUPKG_PATH_RELATIVE (in $CLAUDE_EXTRACT_DIR)"
+echo "Found nupkg: $NUPKG_PATH_RELATIVE (in $CLAUDE_EXTRACT_DIR)"
 
 VERSION=$(echo "$NUPKG_PATH_RELATIVE" | LC_ALL=C grep -oP 'AnthropicClaude-\K[0-9]+\.[0-9]+\.[0-9]+(?=-full|-arm64-full)')
 if [ -z "$VERSION" ]; then
